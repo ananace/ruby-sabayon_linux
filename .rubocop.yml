@@ -1,0 +1,9 @@
+AllCops:
+  TargetRubyVersion: 2.4
+  Exclude:
+    - '*.spec'
+    - 'Rakefile'
+
+# Don't enforce documentation
+Style/Documentation:
+  Enabled: false
