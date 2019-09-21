@@ -84,7 +84,7 @@ module SabayonLinux
         begin
           # pre = Time.now
           start = nil
-          data = Net::HTTP.start(uri.host, uri.port, use_ssl: ssl, open_timeout: 10, read_timeout: 60) do |http|
+          data = Net::HTTP.start(uri.host, uri.port, use_ssl: ssl, open_timeout: 10, read_timeout: 120) do |http|
             start = Time.now
             resp = http.get(uri.path)
             resp.body
