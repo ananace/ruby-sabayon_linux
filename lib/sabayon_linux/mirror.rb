@@ -102,7 +102,7 @@ module SabayonLinux
         rescue Net::HTTPRequestTimeOut, Net::HTTPError
           nil
         end
-      end.compact.max / 1000 / 1000
+      end.compact.max / 1000 / 1000 * 8
     end
 
     def timestamp
