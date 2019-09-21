@@ -27,7 +27,7 @@ module SabayonLinux
       return status if Time.now < next_check
 
       @last_check = Time.now
-      curr_status = available?
+      curr_status = @status == :online
 
       if curr_status
         @failed_checks = 0
