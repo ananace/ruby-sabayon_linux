@@ -27,7 +27,24 @@ module SabayonLinux
       return status if Time.now < next_check
 
       @last_check = Time.now
-      curr_status = @status == :online
+
+      available = http_servers.map do |base_url|
+        url = URI(File.join(base_url, 'entropy/TIMESTAMP'))
+        ssl = url.scheme == 'https'
+
+        begin
+          resp = Net::HTTP.start(url.host, url.port, use_ssl: ssl, open_timeout: 1, read_timeout: 1) do |http|
+            http.request_get(url.path)
+          end
+
+          resp.value
+          resp.body.to_i
+        rescue Net::HTTPRequestTimeOut, Net::HTTPError
+          nil
+        end
+      end.compact
+
+      curr_status = available.any?
 
       if curr_status
         @failed_checks = 0
