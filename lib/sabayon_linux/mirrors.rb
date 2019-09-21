@@ -6,9 +6,9 @@ module SabayonLinux
     def self.list
       data = Net::HTTP.get(URI('https://www.sabayon.org/mirrors/'))
       doc = Nokogiri::HTML.parse(data)
-      
+
       (0..100).map do |num|
-        suffix = "-#{num}" if num > 0
+        suffix = "-#{num}" if num.positive?
 
         node = doc.at_css("#connection-speed#{suffix}")
         next unless node
@@ -35,7 +35,7 @@ module SabayonLinux
           rsync_servers = find_hrefs(mirror, 'Rsync')
         end
         country_name = country.at_css('h2').text
-        
+
         Mirror.new(
           country: country_name,
           name: name,
@@ -43,7 +43,7 @@ module SabayonLinux
 
           ftp_servers: ftp_servers,
           http_servers: http_servers,
-          rsync_servers: rsync_servers,
+          rsync_servers: rsync_servers
         )
       end.compact
     end

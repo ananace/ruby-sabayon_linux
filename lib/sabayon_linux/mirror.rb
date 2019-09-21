@@ -113,7 +113,7 @@ module SabayonLinux
       raise 'No HTTP servers listed' if http_servers.nil? || http_servers.empty?
 
       @timestamp = http_servers.map do |base_url|
-        url = URI(File.join base_url, 'entropy/TIMESTAMP')
+        url = URI(File.join(base_url, 'entropy/TIMESTAMP'))
         ssl = url.scheme == 'https'
 
         begin
