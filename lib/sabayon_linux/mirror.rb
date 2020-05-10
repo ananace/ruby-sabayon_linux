@@ -30,19 +30,31 @@ module SabayonLinux
 
       @last_check = Time.now
 
+      attempts = 0
       available = http_servers.map do |base_url|
         url = URI(File.join(base_url, 'entropy/TIMESTAMP'))
         ssl = url.scheme == 'https'
 
         begin
+          attempts = attempts + 1
           resp = Net::HTTP.start(url.host, url.port, use_ssl: ssl, open_timeout: 1, read_timeout: 1) do |http|
             http.request_get(url.path)
+          end
+
+          if resp.is_a? Net::HTTPRedirection
+            target = URI(resp['location'])
+            target.path.gsub!('/entropy/TIMESTAMP', '')
+
+            base_url.replace target.to_s
+            redo if attempts <= 3
           end
 
           resp.value
           resp.body.to_i
         rescue Net::HTTPRequestTimeOut, Net::HTTPError
           nil
+        ensure
+          attempts = 0
         end
       end.compact
 
