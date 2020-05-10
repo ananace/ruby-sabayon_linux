@@ -63,6 +63,8 @@ module SabayonLinux
       if curr_status
         @failed_checks = 0
         backoff = 0
+
+        @timestamp = available.max
       else
         @failed_checks += 1
         if @failed_checks == 1
@@ -120,7 +122,9 @@ module SabayonLinux
     end
 
     def timestamp
-      Time.at(@timestamp) || timestamp!
+      return Time.at(@timestamp) if @timestamp
+
+      timestamp!
     end
 
     def timestamp!
