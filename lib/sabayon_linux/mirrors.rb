@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'net/http'
 require 'nokogiri'
 
@@ -48,24 +50,26 @@ module SabayonLinux
       end.compact
     end
 
-    private
+    class <<self
+      private
 
-    def self.find_hrefs(node, type, skip_to = nil)
-      list = node.element_children
-      reading = skip_to ? false : true
+      def find_hrefs(node, type, skip_to = nil)
+        list = node.element_children
+        reading = skip_to ? false : true
 
-      current_node = list.first
-      while current_node
-        return current_node.next_element.css('a')&.map { |a| a[:href] } if current_node.text == type && reading
+        current_node = list.first
+        while current_node
+          return current_node.next_element.css('a')&.map { |a| a[:href] } if current_node.text == type && reading
 
-        if skip_to
-          reading = true if current_node == skip_to
-          if !reading && current_node.name =~ /[ou]l|li/
-            reading = true if current_node.element_children.include? skip_to
+          if skip_to
+            reading = true if current_node == skip_to
+            if !reading && current_node.name =~ /[ou]l|li/
+              reading = true if current_node.element_children.include? skip_to
+            end
           end
-        end
 
-        current_node = current_node.next_element
+          current_node = current_node.next_element
+        end
       end
     end
   end

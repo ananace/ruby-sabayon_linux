@@ -1,4 +1,6 @@
-require "sabayon_linux/version"
+# frozen_string_literal: true
+
+require 'sabayon_linux/version'
 
 module SabayonLinux
   class Error < StandardError; end

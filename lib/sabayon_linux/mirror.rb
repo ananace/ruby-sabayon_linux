@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'net/http'
 
 module SabayonLinux
@@ -78,7 +80,7 @@ module SabayonLinux
       file = files[size] || files[:small]
 
       http_servers.map do |base_url|
-        uri = URI(File.join base_url, file)
+        uri = URI(File.join(base_url, file))
         ssl = uri.scheme == 'https'
 
         begin
@@ -133,7 +135,7 @@ module SabayonLinux
 
     def available?
       check_connection == :online
-    rescue
+    rescue StandardError
       false
     end
 
