@@ -7,6 +7,7 @@ module SabayonLinux
   class Mirror
     CONNECTION_CHECK_INTERVAL = 8 * 60 * 60 # every eight hours
     TIMESTAMP_CHECK_INTERVAL = 30 * 60 # 2/hour
+    RATE_CHECK_INTERVAL = 1 * 24 * 60 * 60 # 1/day
 
     attr_accessor :name, :country, :speed,
                   :ftp_servers, :http_servers, :rsync_servers,
@@ -23,6 +24,16 @@ module SabayonLinux
 
       @status = params.fetch(:status, :unknown)
       @failed_checks = params.fetch(:failed_checks, 0)
+
+      @last_rate_speed = params[:last_rate_speed]
+      @last_rate_speed_source = params[:last_rate_speed_source]
+      @last_rate_speed_source = @last_rate_speed_source.to_sym if @last_rate_speed_source.is_a? String
+      @last_rate_check = params.fetch(:last_rate_check, Time.at(0))
+      @last_rate_check = Time.at(@last_rate_check) if @last_rate_check.is_a? Numeric
+      @last_rate_check = Time.parse(@last_rate_check) unless @last_rate_check.is_a? Time
+      @next_rate_check = params.fetch(:last_rate_check, Time.at(0))
+      @next_rate_check = Time.at(@next_rate_check) if @next_rate_check.is_a? Numeric
+      @next_rate_check = Time.parse(@next_rate_check) unless @next_rate_check.is_a? Time
       @last_check = params.fetch(:last_check, Time.at(0))
       @last_check = Time.at(@last_check) if @last_check.is_a? Numeric
       @last_check = Time.parse(@last_check) unless @last_check.is_a? Time
@@ -97,6 +108,9 @@ module SabayonLinux
       raise 'No HTTP servers listed' if http_servers.nil? || http_servers.empty?
       raise 'Only sizes :small, :medium, and :large available' unless %i[small medium large].include? size
 
+      return @last_rate_speed if @last_rate_speed_source == size && @next_rate_check > Time.now
+      @last_rate_speed_source = size
+
       files = {
         small: 'entropy/MIRROR_TEST', # 1000KiB
         medium: 'entropy/standard/portage/database/amd64/5/packages.db.light', # ~36MiB
@@ -104,7 +118,7 @@ module SabayonLinux
       }
       file = files[size] || files[:small]
 
-      http_servers.map do |base_url|
+      speed = http_servers.map do |base_url|
         uri = URI(File.join(base_url, file))
         ssl = uri.scheme == 'https'
 
@@ -130,6 +144,10 @@ module SabayonLinux
           nil
         end
       end.compact.max / 1000 / 1000 * 8
+
+      @last_rate_check = Time.now
+      @next_rate_check = Time.now + RATE_CHECK_INTERVAL
+      @last_rate_speed = speed
     end
 
     def timestamp
@@ -199,6 +217,12 @@ module SabayonLinux
 
         status: status,
         failed_checks: @failed_checks,
+
+        last_rate_speed: @last_rate_speed,
+        last_rate_speed_source: @last_rate_speed_source,
+        last_rate_check: @last_rate_check.to_i,
+        next_rate_check: @next_rate_check.to_i,
+
         last_check: last_check.to_i,
         next_check: next_check.to_i,
         next_timestamp_check: @next_timestamp_check.to_i
