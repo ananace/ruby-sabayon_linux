@@ -5,7 +5,7 @@ require 'time'
 
 module SabayonLinux
   class Mirror
-    CONNECTION_CHECK_INTERVAL = 8 * 60 * 60 # every eight hours
+    CONNECTION_CHECK_INTERVAL = 4 * 60 * 60 # every four hours
     TIMESTAMP_CHECK_INTERVAL = 30 * 60 # 2/hour
     RATE_CHECK_INTERVAL = 1 * 24 * 60 * 60 # 1/day
 
