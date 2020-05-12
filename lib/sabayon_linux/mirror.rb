@@ -23,6 +23,7 @@ module SabayonLinux
       @rsync_servers = params[:rsync_servers]
 
       @status = params.fetch(:status, :unknown)
+      @status = @status.to_sym if @status.is_a? String
       @failed_checks = params.fetch(:failed_checks, 0)
 
       @last_rate_speed = params[:last_rate_speed]
