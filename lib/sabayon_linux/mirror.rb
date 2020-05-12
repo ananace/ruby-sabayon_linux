@@ -118,7 +118,7 @@ module SabayonLinux
       }
       file = files[size] || files[:small]
 
-      speed = http_servers.map do |base_url|
+      speeds = http_servers.map do |base_url|
         uri = URI(File.join(base_url, file))
         ssl = uri.scheme == 'https'
 
@@ -140,10 +140,17 @@ module SabayonLinux
           # TODO: Track data rate and connection delay per server
 
           data.body.size / diff
-        rescue Net::HTTPRequestTimeOut, Net::HTTPError
+        rescue Net::HTTPRequestTimeOut, Net::HTTPServerException, Net::HTTPError, Net::OpenTimeout, Errno::ECONNREFUSED, SocketError
           nil
         end
-      end.compact.max / 1000 / 1000 * 8
+      end.compact
+
+      if speeds.any?
+        speed = speeds.max / 1000 / 1000 * 8
+        @status = :online
+      else
+        @status = :unreachable
+      end
 
       @last_rate_check = Time.now
       @next_rate_check = Time.now + RATE_CHECK_INTERVAL
