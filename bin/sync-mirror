@@ -1,0 +1,162 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'json'
+require 'logger'
+require 'optparse'
+require 'pathname'
+require 'sabayon_linux'
+require 'time'
+
+class SyncMirror
+  DEFAULT_CACHE = {
+    last_mirror_sync: Time.at(0),
+    next_mirror_sync: Time.at(0),
+
+    current_sync: Time.at(0),
+
+    mirrors: [],
+  }.freeze
+  MIRROR_SYNC_INTERVAL = 1 * 24 * 60 * 60 # 1/day
+
+  class RsyncFailure < StandardError; end
+
+  attr_reader :logger
+
+  def initialize target:, verbose: false, cache_path: '~/.cache/sabayon-linux', **args
+    @target = target
+    Pathname.new(@target).mkpath unless Dir.exist? @target
+    @cache_path = File.expand_path cache_path
+
+    @logger = Logger.new(STDERR)
+    @logger.level = Logger::WARN
+    @logger.level = Logger::DEBUG if verbose
+  end
+
+  def load!
+    Pathname.new(@cache_path).mkpath unless Dir.exist? @cache_path
+    cache_file = File.join(@cache_path, 'cache.json')
+    logger.debug "Loading cache from #{cache_file}"
+    File.write(cache_file, '{}') unless File.exist? cache_file
+
+    cache = File.read(cache_file)
+
+    @cache = DEFAULT_CACHE.merge(JSON.parse(cache, symbolize_names: true))
+    @cache[:mirrors].map! { |data| SabayonLinux::Mirror.new **data }
+    @cache[:last_mirror_sync] = Time.at(@cache[:last_mirror_sync])
+    @cache[:next_mirror_sync] = Time.at(@cache[:next_mirror_sync])
+    @cache[:current_sync] = Time.at(@cache[:current_sync])
+
+    logger.debug "Loaded #{@cache[:mirrors].count} mirrors from cache"
+
+    @cache
+  end
+
+  def save!
+    cache_file = File.join(@cache_path, 'cache.json')
+    logger.debug "Saving cache to #{cache_file}"
+    
+    @cache[:last_mirror_sync] = @cache[:last_mirror_sync].to_i
+    @cache[:next_mirror_sync] = @cache[:next_mirror_sync].to_i
+    @cache[:current_sync] = @cache[:current_sync].to_i
+    File.write cache_file, @cache.to_json
+  end
+
+  def run
+    sync_mirrors if @cache[:next_mirror_sync] <= Time.now
+    sources = sort_mirrors
+
+    if sources.any?
+      begin
+        source = sources.shift
+        if source.nil?
+          logger.error 'Out of sources to sync from'
+          return false
+        end
+        raise RsyncFailure if source.timestamp.nil?
+        if source.timestamp <= @cache[:current_sync]
+          logger.info 'Current data up-to-date'
+          return true
+        end
+
+        addr = URI(source.rsync_servers.sample)
+        addr.scheme = 'rsync' # Some servers have the invalid scheme rsnyc://
+
+        logger.info "Attempting to rsync updates from #{source.name} (#{addr})"
+
+        # Run rsync
+        args = %w[-rlptDu --itemize-changes --partial --force --exclude=*~] # --delete-during 
+        logger.debug "$ rsync #{args.join ' '} #{addr.to_s} #{@target}"
+        @cache[:current_sync] = source.timestamp
+        unless system('rsync', *args, addr.to_s, @target)
+          logger.warn "Failed to rsync from #{source.name} (#{addr})"
+          raise RsyncFailure
+        end
+      rescue RsyncFailure
+        retry
+      rescue StandardError => e
+        logger.error "Failed to sync from #{source.name}\n#{e.class} #{e}"
+      end
+    else
+      logger.info 'No available mirrors, skipping'
+    end
+  ensure
+    logger.info 'Finished mirror sync'
+  end
+
+  private
+
+  def sync_mirrors
+    logger.info 'Syncing mirrors...'
+    @cache[:last_mirror_sync] = Time.now
+    @cache[:next_mirror_sync] = Time.now + MIRROR_SYNC_INTERVAL
+
+    @cache[:mirrors] = SabayonLinux::Mirrors.list
+  end
+
+  def sort_mirrors
+    logger.info 'Sorting mirrors...'
+    # Verify connectivity and update timestamp
+    @cache[:mirrors].each(&:check_connection)
+    possible = @cache[:mirrors].select { |m| m.available? && m.rsync_servers? && m.timestamp > @cache[:current_sync] }
+    possible.sort { |a, b| ((b.timestamp.to_i || 0 rescue 0) + b.test_speed) <=> ((a.timestamp.to_i || 0 rescue 0) + a.test_speed) }
+  end
+end
+
+if $PROGRAM_NAME == __FILE__
+  options = {}
+  oparse = OptionParser.new do |opts|
+    opts.banner = "Usage: #{$PROGRAM_NAME} [options] TARGET"
+
+    opts.on '-c', '--cache PATH', 'Specify a different cache path (Default ~/.cache/sabayon-linux)' do |path|
+      options[:cache_path] = path.strip
+    end
+
+    opts.on '-v', '--[no-]verbose', 'Run verbosely' do |v|
+      options[:verbose] = v
+    end
+
+    opts.on '-h', '--help', 'Prints this text' do
+      puts opts
+      exit
+    end
+  end
+  oparse.parse!
+
+  if ARGV[0].nil?
+    puts oparse
+    exit 1
+  end
+
+  target = Pathname.new(ARGV[0])
+  target = target.expand_path unless target.absolute?
+
+  sync = SyncMirror.new(target: ARGV[0], **options)
+
+  sync.load!
+  begin
+    sync.run
+  ensure
+    sync.save!
+  end
+end
