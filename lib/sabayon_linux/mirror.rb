@@ -26,6 +26,10 @@ module SabayonLinux
       @status = @status.to_sym if @status.is_a? String
       @failed_checks = params.fetch(:failed_checks, 0)
 
+      @timestamp = params[:timestamp]
+      @timestamp = Time.at(@timestamp) if @timestamp.is_a? Numeric
+      @timestamp = Time.parse(@timestamp) unless @timestamp.nil? || @timestamp.is_a?(Time)
+
       @last_rate_speed = params[:last_rate_speed]
       @last_rate_speed_source = params[:last_rate_speed_source]
       @last_rate_speed_source = @last_rate_speed_source.to_sym if @last_rate_speed_source.is_a? String
@@ -225,6 +229,7 @@ module SabayonLinux
 
         status: status,
         failed_checks: @failed_checks,
+        timestamp: @timestamp,
 
         last_rate_speed: @last_rate_speed,
         last_rate_speed_source: @last_rate_speed_source,
