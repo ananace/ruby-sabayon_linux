@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'net/ftp'
 require 'net/http'
 require 'time'
 
@@ -9,14 +10,15 @@ module SabayonLinux
     TIMESTAMP_CHECK_INTERVAL = 30 * 60 # 2/hour
     RATE_CHECK_INTERVAL = 1 * 24 * 60 * 60 # 1/day
 
-    attr_accessor :name, :country, :speed,
+    attr_accessor :name, :country, :speed, :logger,
                   :ftp_servers, :http_servers, :rsync_servers,
-                  :status, :last_check, :next_check
+                  :status, :next_check
 
     def initialize(name:, country:, **params)
       @name = name
       @country = country
       @speed = params[:speed]
+      @logger = params[:logger]
 
       @ftp_servers = params[:ftp_servers]
       @http_servers = params[:http_servers]
@@ -49,48 +51,68 @@ module SabayonLinux
 
     def check_connection
       return status if Time.now < next_check
-      return :no_http unless http_servers&.any?
+      logger.debug "#{name} - Connection check timeout reached (#{next_check})" if logger
 
-      @last_check = Time.now
-      available = []
+      check_connection!
+    end
+
+    def check_connection!
+      return :no_servers unless http_servers&.any? || ftp_servers&.any?
 
       # TODO: Test if https is also available
 
       attempts = 0
-      available = http_servers.map do |base_url|
+
+      servers = (http_servers || []) + (ftp_servers || [])
+      available = servers.inject(nil) do |timestamp, base_url|
         url = URI(File.join(base_url, 'entropy/TIMESTAMP'))
         ssl = url.scheme == 'https'
 
         begin
           attempts = attempts + 1
-          resp = Net::HTTP.start(url.host, url.port, use_ssl: ssl, open_timeout: 1, read_timeout: 1) do |http|
-            http.request_get(url.path)
+          logger.debug "#{name} - Connection check against #{url}" if logger
+          if url.scheme == 'ftp'
+            resp = Net::FTP.open(url.host, open_timeout: 1, read_timeout: 2) do |ftp|
+              ftp.login rescue nil
+
+              ftp.mtime(url.path).to_i
+            end
+          else
+            resp = Net::HTTP.start(url.host, url.port, use_ssl: ssl, open_timeout: 1, read_timeout: 1) do |http|
+              http.request_get(url.path)
+            end
+
+            if resp.is_a? Net::HTTPRedirection
+              target = URI(resp['location'])
+              target.path.gsub!('/entropy/TIMESTAMP', '')
+
+              base_url.replace target.to_s
+              redo if attempts <= 3
+            end
+
+            resp.value
+            timestamp = Time.parse(resp['last-modified']).to_i if resp['last-modified']
+            timestamp ||= resp.body.to_i if resp['content-length'].to_i > 0
           end
+        rescue StandardError => e
+          logger.error "#{name} - #{e.class} on connection check against #{url}" if logger
 
-          if resp.is_a? Net::HTTPRedirection
-            target = URI(resp['location'])
-            target.path.gsub!('/entropy/TIMESTAMP', '')
-
-            base_url.replace target.to_s
-            redo if attempts <= 3
-          end
-
-          resp.value
-          resp.body.to_i
-        rescue Net::HTTPRequestTimeOut, Net::HTTPServerException, Net::HTTPError, Net::OpenTimeout, Errno::ECONNREFUSED, SocketError
-          nil
+          next
         ensure
           attempts = 0
         end
-      end.compact
 
-      curr_status = available.any?
+        break timestamp
+      end
+
+      curr_status = !available.nil?
 
       if curr_status
         @failed_checks = 0
         backoff = 0
 
-        @timestamp = available.max
+        @timestamp = available
+        @next_timestamp_check = Time.now + TIMESTAMP_CHECK_INTERVAL
       else
         @failed_checks += 1
         if @failed_checks == 1
@@ -102,17 +124,25 @@ module SabayonLinux
         end
       end
 
-      @status = curr_status ? :online : :unreachable
       @next_check = Time.now + CONNECTION_CHECK_INTERVAL + backoff
+      @status = curr_status ? :online : :unreachable
+      logger.debug "#{name} - Connection status: #{status}" if logger
+      @status
     end
 
     def test_speed(size: :small)
-      raise 'No HTTP servers listed' if http_servers.nil? || http_servers.empty?
+      return @last_rate_speed if @last_rate_speed_source == size && Time.now < @next_rate_check
+
+      logger.debug "#{name} - Speed test timeout reached (#{@next_rate_check})" if logger
+
+      test_speed! size: size
+    end
+
+    def test_speed!(size: :small)
+      raise 'No HTTP/FTP servers listed' unless http_servers&.any? || ftp_servers&.any?
       raise 'Only sizes :small, :medium, and :large available' unless %i[small medium large].include? size
 
-      return @last_rate_speed if @last_rate_speed_source == size && @next_rate_check > Time.now
       @last_rate_speed_source = size
-
       files = {
         small: 'entropy/MIRROR_TEST', # 1000KiB
         medium: 'entropy/standard/portage/database/amd64/5/packages.db.light', # ~36MiB
@@ -120,69 +150,103 @@ module SabayonLinux
       }
       file = files[size] || files[:small]
 
-      speeds = http_servers.map do |base_url|
+      servers = (http_servers || []) + (ftp_servers || [])
+      speeds = servers.map do |base_url|
         uri = URI(File.join(base_url, file))
         ssl = uri.scheme == 'https'
+
+        logger.debug "#{name} - Testing speed against #{uri}" if logger
 
         begin
           # pre = Time.now
           start = nil
-          data = Net::HTTP.start(uri.host, uri.port, use_ssl: ssl, open_timeout: 10, read_timeout: 120) do |http|
-            start = Time.now
-            resp = http.get(uri.path)
-            resp.body
-            resp
+          if uri.scheme == 'ftp'
+            data = Net::FTP.open(uri.host, open_timeout: 2, read_timeout: 10) do |ff|
+              ff.login rescue nil
+
+              start = Time.now
+              ff.getbinaryfile(uri.path, nil).size
+            end
+          else
+            data = Net::HTTP.start(uri.host, uri.port, use_ssl: ssl, open_timeout: 2, read_timeout: 10) do |http|
+              start = Time.now
+              resp = http.get(uri.path)
+              resp.body.size
+            end
           end
           # conn_diff = start - pre
           diff = Time.now - start
 
-          data.value
-
           # TODO: Assert retrieved size
           # TODO: Track data rate and connection delay per server
 
-          data.body.size / diff
-        rescue Net::HTTPRequestTimeOut, Net::HTTPServerException, Net::HTTPError, Net::OpenTimeout, Errno::ECONNREFUSED, SocketError
-          nil
+          data / diff
+        rescue StandardError => e
+          logger.error "#{name} - #{e.class} on speed test against #{uri}" if logger
+
+          next
         end
       end.compact
 
       if speeds.any?
         speed = speeds.max / 1000 / 1000 * 8
+
+        logger.debug "#{name} - Max speed estimated at #{speed.round(2)} Mbit" if logger
         @status = :online
       else
+        logger.debug "#{name} - Failed to test speed" if logger
         @status = :unreachable
       end
 
-      @last_rate_check = Time.now
       @next_rate_check = Time.now + RATE_CHECK_INTERVAL
       @last_rate_speed = speed
     end
 
     def timestamp
-      return Time.at(@timestamp) if @timestamp && (@next_timestamp_check || Time.at(0)) < Time.now
+      return Time.at(@timestamp) if @timestamp && Time.now < @next_timestamp_check
+
+      logger.debug "#{name} - Timestamp check timeout reached (#{@next_timestamp_check})" if logger
 
       timestamp!
     end
 
     def timestamp!
-      raise 'No HTTP servers listed' if http_servers.nil? || http_servers.empty?
+      raise 'No HTTP/FTP servers listed' unless http_servers&.any? || ftp_servers&.any?
 
-      @timestamp = http_servers.map do |base_url|
+      servers = (http_servers || []) + (ftp_servers || [])
+      @timestamp = servers.inject(nil) do |timestamp, base_url|
         url = URI(File.join(base_url, 'entropy/TIMESTAMP'))
         ssl = url.scheme == 'https'
 
-        begin
-          resp = Net::HTTP.start(url.host, url.port, use_ssl: ssl, open_timeout: 2, read_timeout: 5) do |http|
-            http.request_get(url.path)
-          end
+        logger.debug "#{name} - Checking timestamp from #{url}" if logger
 
-          resp.value
-          resp.body.to_i
+        begin
+          if url.scheme == 'ftp'
+            timestamp = Net::FTP.open(url.host, open_timeout: 1, read_timeout: 2) do |ftp|
+              ftp.login rescue nil
+
+              ftp.mtime(url.path).to_i
+            end
+          else
+            resp = Net::HTTP.start(url.host, url.port, use_ssl: ssl, open_timeout: 1, read_timeout: 1) do |http|
+              http.request_get(url.path)
+            end
+
+            resp.value
+            timestamp = Time.parse(resp['last-modified']).to_i if resp['last-modified']
+            timestamp ||= resp.body.to_i if resp['content-length'].to_i > 0
+          end
         rescue StandardError
-          nil
+          logger.error "#{name} - #{e.class} on timestamp check against #{url}" if logger
+
+          next
         end
-      end.compact.max
+        logger.debug "#{name} - Timestamp retrieved as #{Time.at(timestamp)}" if logger
+
+        break timestamp
+      end
+
+      logger.debug "#{name} - Failed to get timestamp" if logger && @timestamp.nil?
 
       @next_timestamp_check = Time.now + TIMESTAMP_CHECK_INTERVAL
       Time.at(@timestamp) if @timestamp
