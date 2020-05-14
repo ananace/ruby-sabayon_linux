@@ -90,6 +90,8 @@ class SyncMirror
             @cache[:current_sync] = source.timestamp
             up_to_date = true
 
+            logger.debug "Successfully synced data, now at #{@cache[:current_sync]}"
+
             break # No need to run more rsyncs from the same server
           else
             logger.warn "Failed to rsync from #{source.name} (#{addr})"
