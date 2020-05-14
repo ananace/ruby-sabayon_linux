@@ -15,6 +15,7 @@ RUN bundle install --without development \
  && apt-get update -yqq \
  && apt-get install rsync -yqq \
  && apt-get clean -yqq \
- && rm -rf /var/lib/apt
+ && rm -rf /var/lib/apt \
+ && /usr/local/bin/sync-mirror --version
 
 ENTRYPOINT [ "/usr/local/bin/sync-mirror" ]
