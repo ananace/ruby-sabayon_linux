@@ -33,19 +33,16 @@ module SabayonLinux
       @last_rate_speed = params[:last_rate_speed]
       @last_rate_speed_source = params[:last_rate_speed_source]
       @last_rate_speed_source = @last_rate_speed_source.to_sym if @last_rate_speed_source.is_a? String
-      @last_rate_check = params.fetch(:last_rate_check, Time.at(0))
-      @last_rate_check = Time.at(@last_rate_check) if @last_rate_check.is_a? Numeric
-      @last_rate_check = Time.parse(@last_rate_check) unless @last_rate_check.is_a? Time
-      @next_rate_check = params.fetch(:last_rate_check, Time.at(0))
+
+      @next_rate_check = params.fetch(:next_rate_check, Time.at(0))
       @next_rate_check = Time.at(@next_rate_check) if @next_rate_check.is_a? Numeric
       @next_rate_check = Time.parse(@next_rate_check) unless @next_rate_check.is_a? Time
-      @last_check = params.fetch(:last_check, Time.at(0))
-      @last_check = Time.at(@last_check) if @last_check.is_a? Numeric
-      @last_check = Time.parse(@last_check) unless @last_check.is_a? Time
-      @next_check = params.fetch(:next_check, Time.now)
+
+      @next_check = params.fetch(:next_check, Time.at(0))
       @next_check = Time.at(@next_check) if @next_check.is_a? Numeric
       @next_check = Time.parse(@next_check) unless @next_check.is_a? Time
-      @next_timestamp_check = params.fetch(:next_timestamp_check, Time.now)
+
+      @next_timestamp_check = params.fetch(:next_timestamp_check, Time.at(0))
       @next_timestamp_check = Time.at(@next_timestamp_check) if @next_timestamp_check.is_a? Numeric
       @next_timestamp_check = Time.parse(@next_timestamp_check) unless @next_timestamp_check.is_a? Time
     end
@@ -233,10 +230,8 @@ module SabayonLinux
 
         last_rate_speed: @last_rate_speed,
         last_rate_speed_source: @last_rate_speed_source,
-        last_rate_check: @last_rate_check.to_i,
         next_rate_check: @next_rate_check.to_i,
 
-        last_check: last_check.to_i,
         next_check: next_check.to_i,
         next_timestamp_check: @next_timestamp_check.to_i
       }.compact.to_json(*params)
