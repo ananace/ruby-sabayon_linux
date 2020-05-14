@@ -19,8 +19,6 @@ class SyncMirror
   }.freeze
   MIRROR_SYNC_INTERVAL = 1 * 24 * 60 * 60 # 1/day
 
-  class RsyncFailure < StandardError; end
-
   attr_reader :logger
 
   def initialize target:, verbose: false, cache_path: '~/.cache/sabayon-linux', **args
@@ -42,7 +40,7 @@ class SyncMirror
     cache = File.read(cache_file)
 
     @cache = DEFAULT_CACHE.merge(JSON.parse(cache, symbolize_names: true))
-    @cache[:mirrors].map! { |data| SabayonLinux::Mirror.new **data }
+    @cache[:mirrors].map! { |data| SabayonLinux::Mirror.new **(data.merge logger: @logger) }
     @cache[:last_mirror_sync] = Time.at(@cache[:last_mirror_sync])
     @cache[:next_mirror_sync] = Time.at(@cache[:next_mirror_sync])
     @cache[:current_sync] = Time.at(@cache[:current_sync])
@@ -64,42 +62,52 @@ class SyncMirror
 
   def run
     sync_mirrors if @cache[:next_mirror_sync] <= Time.now
-    sources = sort_mirrors
+    @cache[:mirrors].each(&:check_connection)
+    possible = @cache[:mirrors].select { |m| m.available? && m.rsync_servers? }
+    sources = possible.select { |m| (m.timestamp.to_i || 0 rescue 0) >= @cache[:current_sync].to_i }
+                      .sort { |a, b| ((b.timestamp.to_i || 0 rescue 0) + b.test_speed) <=> ((a.timestamp.to_i || 0 rescue 0) + a.test_speed) }
 
-    if sources.any?
+    up_to_date = false
+
+    sources.each do |source|
       begin
-        source = sources.shift
-        if source.nil?
-          logger.error 'Out of sources to sync from'
-          return false
-        end
-        raise RsyncFailure if source.timestamp.nil?
+        next if source.timestamp.nil?
         if source.timestamp <= @cache[:current_sync]
-          logger.info 'Current data up-to-date'
-          return true
+          up_to_date = true
+          next # Try another - possibly slower - mirror in case more updates are available
         end
 
-        addr = URI(source.rsync_servers.sample)
-        addr.scheme = 'rsync' # Some servers have the invalid scheme rsnyc://
+        source.rsync_servers.each do |src_addr|
+          addr = URI(src_addr)
+          addr.scheme = 'rsync' # Some servers have the invalid scheme rsnyc://
 
-        logger.info "Attempting to rsync updates from #{source.name} (#{addr})"
+          logger.info "Attempting to rsync updates from #{source.name} (#{addr})"
 
-        # Run rsync
-        args = %w[-rlptDu --itemize-changes --partial --force --exclude=*~] # --delete-during 
-        logger.debug "$ rsync #{args.join ' '} #{addr.to_s} #{@target}"
-        @cache[:current_sync] = source.timestamp
-        unless system('rsync', *args, addr.to_s, @target)
-          logger.warn "Failed to rsync from #{source.name} (#{addr})"
-          raise RsyncFailure
+          # Run rsync
+          args = %w[-rlptDu --itemize-changes --partial --force --exclude=*~] # --delete-during 
+          logger.debug "$ rsync #{args.join ' '} #{addr.to_s} #{@target}"
+          if system('rsync', *args, addr.to_s, @target)
+            @cache[:current_sync] = source.timestamp
+            up_to_date = true
+
+            break # No need to run more rsyncs from the same server
+          else
+            logger.warn "Failed to rsync from #{source.name} (#{addr})"
+          end
+        rescue StandardError => e
+          logger.error "Failed to sync from #{source.name}\n#{e.class}: #{e}\n#{e.backtrace}"
         end
-      rescue RsyncFailure
-        retry
-      rescue StandardError => e
-        logger.error "Failed to sync from #{source.name}\n#{e.class} #{e}"
       end
-    else
-      logger.info 'No available mirrors, skipping'
     end
+
+    logger.info 'No available mirrors, skipping' if possible.empty?
+    
+    if up_to_date
+      logger.info "Current sync up-to-date with timestamp #{@cache[:current_sync]}"
+    else
+      logger.error 'Failed to sync updated content from any mirror'
+    end
+
   ensure
     logger.info 'Finished mirror sync'
   end
@@ -116,10 +124,9 @@ class SyncMirror
 
   def sort_mirrors
     logger.info 'Sorting mirrors...'
+
     # Verify connectivity and update timestamp
-    @cache[:mirrors].each(&:check_connection)
-    possible = @cache[:mirrors].select { |m| m.available? && m.rsync_servers? && m.timestamp > @cache[:current_sync] }
-    possible.sort { |a, b| ((b.timestamp.to_i || 0 rescue 0) + b.test_speed) <=> ((a.timestamp.to_i || 0 rescue 0) + a.test_speed) }
+
   end
 end
 
@@ -138,6 +145,11 @@ if $PROGRAM_NAME == __FILE__
 
     opts.on '-h', '--help', 'Prints this text' do
       puts opts
+      exit
+    end
+
+    opts.on '-V', '--version', 'Prints the version and exits' do
+      puts "v#{SabayonLinux::VERSION}"
       exit
     end
   end
