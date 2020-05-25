@@ -21,10 +21,11 @@ class SyncMirror
 
   attr_reader :logger
 
-  def initialize target:, verbose: false, cache_path: '~/.cache/sabayon-linux', **args
+  def initialize target:, verbose: false, cache_path: '~/.cache/sabayon-linux', erase: false, **args
     @target = target
     Pathname.new(@target).mkpath unless Dir.exist? @target
     @cache_path = File.expand_path cache_path
+    @erase = erase
 
     @logger = Logger.new(STDERR)
     @logger.level = Logger::WARN
@@ -84,7 +85,8 @@ class SyncMirror
           logger.info "Attempting to rsync updates from #{source.name} (#{addr})"
 
           # Run rsync
-          args = %w[-rlptDu --itemize-changes --partial --force --exclude=*~] # --delete-during 
+          args = %w[-rlptDu --itemize-changes --partial --force --exclude=*~]
+          args << '--delete-during' if @erase
           logger.debug "$ rsync #{args.join ' '} #{addr.to_s} #{@target}"
           if system('rsync', *args, addr.to_s, @target)
             @cache[:current_sync] = source.timestamp
@@ -139,6 +141,10 @@ if $PROGRAM_NAME == __FILE__
 
     opts.on '-c', '--cache PATH', 'Specify a different cache path (Default ~/.cache/sabayon-linux)' do |path|
       options[:cache_path] = path.strip
+    end
+
+    opts.on '--[no-]erase', 'Erase missing data, to keep sync size down' do |erase|
+      options[:erase] = erase
     end
 
     opts.on '-v', '--[no-]verbose', 'Run verbosely' do |v|
