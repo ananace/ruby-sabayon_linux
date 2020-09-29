@@ -10,7 +10,9 @@ module SabayonLinux
     TIMESTAMP_CHECK_INTERVAL = 30 * 60 # 2/hour
     RATE_CHECK_INTERVAL = 1 * 24 * 60 * 60 # 1/day
 
+    ## Currently stuck on Tue, 29 Sep 2020 19:10:31 GMT
     # TIMESTAMP_PATH = 'entropy/TIMESTAMP'
+
     TIMESTAMP_PATH = 'entropy/standard/sabayonlinux.org/database/amd64/5/packages.db.timestamp'
 
     attr_accessor :name, :country, :speed, :logger,
