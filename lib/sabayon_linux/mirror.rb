@@ -10,6 +10,9 @@ module SabayonLinux
     TIMESTAMP_CHECK_INTERVAL = 30 * 60 # 2/hour
     RATE_CHECK_INTERVAL = 1 * 24 * 60 * 60 # 1/day
 
+    # TIMESTAMP_PATH = 'entropy/TIMESTAMP'
+    TIMESTAMP_PATH = 'entropy/standard/sabayonlinux.org/database/amd64/5/packages.db.timestamp'
+
     attr_accessor :name, :country, :speed, :logger,
                   :ftp_servers, :http_servers, :rsync_servers,
                   :status, :next_check
@@ -65,7 +68,7 @@ module SabayonLinux
 
       servers = (http_servers || []) + (ftp_servers || [])
       available = servers.inject(nil) do |timestamp, base_url|
-        url = URI(File.join(base_url, 'entropy/TIMESTAMP'))
+        url = URI(File.join(base_url, TIMESTAMP_PATH))
         ssl = url.scheme == 'https'
 
         begin
@@ -84,15 +87,16 @@ module SabayonLinux
 
             if resp.is_a? Net::HTTPRedirection
               target = URI(resp['location'])
-              target.path.gsub!('/entropy/TIMESTAMP', '')
+              target.path.gsub!(TIMESTAMP_PATH, '')
+              target.path.chomp!('/')
 
               base_url.replace target.to_s
               redo if attempts <= 3
             end
 
             resp.value
-            timestamp = Time.parse(resp['last-modified']).to_i if resp['last-modified']
-            timestamp ||= resp.body.to_i if resp['content-length'].to_i > 0
+            timestamp = Time.parse(resp['last-modified']).to_i
+            # timestamp ||= resp.body.to_i if resp['content-length'].to_i > 0
           end
         rescue StandardError => e
           logger.error "#{name} - #{e.class} on connection check against #{url}" if logger
@@ -215,7 +219,7 @@ module SabayonLinux
 
       servers = (http_servers || []) + (ftp_servers || [])
       @timestamp = servers.inject(nil) do |timestamp, base_url|
-        url = URI(File.join(base_url, 'entropy/TIMESTAMP'))
+        url = URI(File.join(base_url, TIMESTAMP_PATH))
         ssl = url.scheme == 'https'
 
         logger.debug "#{name} - Checking timestamp from #{url}" if logger
@@ -233,11 +237,11 @@ module SabayonLinux
             end
 
             resp.value
-            timestamp = Time.parse(resp['last-modified']).to_i if resp['last-modified']
-            timestamp ||= resp.body.to_i if resp['content-length'].to_i > 0
+            timestamp = Time.parse(resp['last-modified']).to_i
+            # timestamp ||= resp.body.to_i if resp['content-length'].to_i > 0
           end
-        rescue StandardError
-          logger.error "#{name} - #{e.class} on timestamp check against #{url}" if logger
+        rescue StandardError => e
+          logger.error "#{name} - #{e.class}: #{e} on timestamp check against #{url}" if logger
 
           next
         end
