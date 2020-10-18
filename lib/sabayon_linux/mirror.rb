@@ -101,7 +101,7 @@ module SabayonLinux
             # timestamp ||= resp.body.to_i if resp['content-length'].to_i > 0
           end
         rescue StandardError => e
-          logger.error "#{name} - #{e.class} on connection check against #{url}" if logger
+          logger.error "#{name} - #{e.class}: #{e} on connection check against #{url}" if logger
 
           next
         ensure
